@@ -2,29 +2,33 @@
 AGENT DEMONSTRATION - Weather Prediction MCP Server
 ================================================================================
 
+Repository
+    https://github.com/abhibastia/weather-mcp-agent
 MCP server (Databricks App)
     https://mcp-server-weather-service-7474646797973312.aws.databricksapps.com
 MCP endpoint
     https://mcp-server-weather-service-7474646797973312.aws.databricksapps.com/mcp
+Dashboard app (stretch)
+    https://weather-mcp-dashboard-7474646797973312.aws.databricksapps.com
 Registered in
     Unity AI Gateway > MCPs > mcp-server-weather-service   (status: Active)
 Agent
     Databricks AI Playground, model "Meta Llama 3.3 70B Instruct"
     (databricks-meta-llama-3-3-70b-instruct), with the MCP server attached
     as a tool and SYSTEM_PROMPT.md pasted as the system prompt.
-Dashboard app (stretch)
-    https://weather-mcp-dashboard-7474646797973312.aws.databricksapps.com
 Tools exposed (6 - three required, three stretch)
     get_current_weather, get_forecast, should_i_bring_an_umbrella,
     get_severe_weather_alerts, get_historical_weather, compare_weather
 Date
-    2026-08-08
+    2026-08-09
 
-Five questions follow, transcribed verbatim from the Playground including the
-model's reasoning, the tool call, the raw tool output, and the final answer.
+Seven questions follow, transcribed verbatim from the Playground - the model's
+reasoning, the tool call, the raw tool output, and the final answer. All seven
+come from a single session against one configuration.
 
-Questions 1-3 show the tools working. Questions 4-5 are included because they
-show the GUARDRAILS working, which is the part that is easy to get wrong.
+Q1-Q3 exercise the three required capabilities.
+Q4-Q5 exercise the stretch tools (historical lookup, multi-city comparison).
+Q6-Q7 exercise the GUARDRAILS, which is the part that is easy to get wrong.
 
 
 ================================================================================
@@ -32,9 +36,8 @@ Q1. What's the weather like in Chicago right now?
 ================================================================================
 
 REASONING
-    The user is asking about the current weather conditions in Chicago, so I
-    need to use the get_current_weather function to provide the most
-    up-to-date information.
+    The user wants to know the current weather in Chicago, so I need to use the
+    get_current_weather function to get the latest weather conditions.
 
 TOOL CALL   get_current_weather
     {
@@ -47,13 +50,13 @@ TOOL OUTPUT
       "resolved_location": "Chicago, Illinois, United States",
       "latitude": 41.85003,
       "longitude": -87.65005,
-      "observed_at": "2026-08-08T16:45",
+      "observed_at": "2026-08-08T17:45",
       "timezone": "America/Chicago",
-      "temperature": 24.7,
-      "feels_like": 26.1,
-      "humidity_pct": 70,
+      "temperature": 24.5,
+      "feels_like": 26.4,
+      "humidity_pct": 75,
       "precipitation": 0,
-      "wind_speed": 12.8,
+      "wind_speed": 12.3,
       "wind_gusts": 15.1,
       "conditions": "clear sky",
       "units": {
@@ -65,17 +68,13 @@ TOOL OUTPUT
     }
 
 ANSWER
-    The current weather in Chicago, Illinois, is a clear sky with a temperature
-    of 25 C, feeling like 26 C, and a humidity of 70%. The wind speed is
-    12.8 km/h, with gusts of 15.1 km/h, and there is no precipitation. I used
-    the location "Chicago, Illinois, United States" for this query.
+    The current weather in Chicago is a clear sky with a temperature of 24.5 C,
+    feeling like 26.4 C. The humidity is 75%, and there is no precipitation. The
+    wind speed is 12.3 km/h, with gusts of up to 15.1 km/h.
 
 WHAT THIS DEMONSTRATES
     - Correct tool selection for a "right now" question.
     - Every figure in the answer traces to the tool output. Nothing invented.
-    - The resolved_location guardrail firing: the agent states which place it
-      actually resolved to, so a wrong geocoder match would be visible to the
-      user rather than silently wrong.
 
 
 ================================================================================
@@ -83,9 +82,9 @@ Q2. Should I bring an umbrella in Mumbai today?
 ================================================================================
 
 REASONING
-    The user is asking about whether they should bring an umbrella in Mumbai
-    today. This suggests they are concerned about potential rain, so the
-    should_i_bring_an_umbrella tool is the most relevant.
+    The user is asking about bringing an umbrella in Mumbai, which implies they
+    want to know if it will rain. This tool will provide a direct answer to that
+    question.
 
 TOOL CALL   should_i_bring_an_umbrella
     {
@@ -124,20 +123,17 @@ TOOL OUTPUT
     }
 
 ANSWER
-    You should bring an umbrella in Mumbai today because there is a 100% chance
-    of precipitation with 6.0 mm expected, which is above the threshold for
-    taking an umbrella. The forecast shows moderate drizzle, and the high chance
-    of precipitation and expected accumulation exceed the thresholds for
-    recommending an umbrella.
+    Yes, you should bring an umbrella in Mumbai today. The forecast shows a 100%
+    chance of precipitation with 6.0 mm expected, which is above the thresholds
+    for taking an umbrella.
 
 WHAT THIS DEMONSTRATES
-    - The prediction tool is NOT a passthrough. It returns a verdict
-      ("yes"), a confidence, the thresholds it applied, and the forecast
-      figures it judged.
+    - The prediction tool is NOT a passthrough. It returns a verdict, a
+      confidence, the thresholds it applied, and the forecast figures it judged.
     - The agent chose the judgment tool over get_forecast for a
-      rain-preparedness question, as instructed.
-    - The answer explains WHY (100% vs the 40% threshold, 6.0 mm vs the
-      1.0 mm threshold) rather than asserting a bare yes.
+      rain-preparedness question, as the system prompt instructs.
+    - The answer explains WHY (100% against the 40% threshold, 6.0 mm against
+      the 1.0 mm threshold) rather than asserting a bare yes.
 
 
 ================================================================================
@@ -146,8 +142,8 @@ Q3. Are there any severe weather alerts for Miami?
 
 REASONING
     The user is asking about severe weather alerts for Miami, which suggests
-    they want to know about any active alerts in the area. This tool is the
-    most relevant for answering that question.
+    they want to know about any active alerts or warnings in the area. This tool
+    is specifically designed to provide that information.
 
 TOOL CALL   get_severe_weather_alerts
     {
@@ -165,45 +161,180 @@ TOOL OUTPUT
     }
 
 ANSWER
-    There are no severe weather alerts for Miami, Florida, according to the
-    National Weather Service.
+    There are no severe weather alerts for Miami.
 
 WHAT THIS DEMONSTRATES
     - The second data source (National Weather Service) is wired up and
       reachable, separate from Open-Meteo.
     - coverage "us" means the feed genuinely covers this location, so
-      "no alerts" is a real answer here. Contrast with Q5.
+      "no alerts" is a truthful answer here. Contrast with Q7.
 
 
 ================================================================================
-Q4. What's the weather in Xyzzyville?
-================================================================================
-
-ANSWER (no tool call was made)
-    I couldn't find any information on a location called "Xyzzyville". It's
-    possible that it's a fictional place or not a real city. Can you please
-    provide more context or clarify the location you are referring to?
-
-WHAT THIS DEMONSTRATES
-    - The agent asked the user to clarify instead of inventing a forecast,
-      which is the required behaviour for an unresolvable location.
-
-HONEST NOTE
-    The model recognised "Xyzzyville" as fictional from its own knowledge and
-    answered without calling a tool. The outcome is correct - it invented no
-    weather - but this transcript does not exercise the tool's error path.
-    That path is verified directly below.
-
-
-================================================================================
-Q5. Any weather alerts for London?
+Q4. What was the weather in Chicago on 2026-07-10?          [STRETCH TOOL]
 ================================================================================
 
 REASONING
-    The user is asking about severe weather alerts for London, which is outside
-    the United States. This tool provides severe weather alerts for locations
-    in the United States only, and returns an empty alert list with coverage
-    'unavailable' for locations outside the US.
+    The user is asking for the historical weather in Chicago on a specific date,
+    so I need to use the get_historical_weather function to retrieve this
+    information.
+
+TOOL CALL   get_historical_weather
+    {
+      "location": "Chicago",
+      "date": "2026-07-10"
+    }
+
+TOOL OUTPUT
+    {
+      "requested_location": "Chicago",
+      "resolved_location": "Chicago, Illinois, United States",
+      "date": "2026-07-10",
+      "conditions": "light drizzle",
+      "temp_max": 24.8,
+      "temp_min": 21.7,
+      "temp_mean": 23.1,
+      "precipitation_sum": 0.3,
+      "wind_speed_max": 13.4,
+      "units": {
+        "temperature": "°C",
+        "precipitation": "mm",
+        "wind_speed": "km/h"
+      },
+      "source": "open-meteo-archive"
+    }
+
+ANSWER
+    On 2026-07-10, the weather in Chicago was light drizzle, with a high of
+    24.8 C and a low of 21.7 C. The mean temperature was 23.1 C, and there was
+    0.3 mm of precipitation.
+
+WHAT THIS DEMONSTRATES
+    - Stretch tool: historical weather lookup.
+    - The agent routed a PAST date to the archive tool rather than to
+      get_forecast, which cannot serve past dates. Note "source":
+      "open-meteo-archive" - a different dataset (ERA5 reanalysis) from the
+      forecast model used everywhere else.
+
+
+================================================================================
+Q5. Is it warmer in Miami or Reykjavik right now?           [STRETCH TOOL]
+================================================================================
+
+REASONING
+    I am using the compare_weather function to determine which city is warmer
+    between Miami and Reykjavik. This function will allow me to compare the
+    current weather in both cities and provide a direct answer to the user's
+    question.
+
+TOOL CALL   compare_weather
+    {
+      "locations": [
+        "Miami",
+        "Reykjavik"
+      ]
+    }
+
+TOOL OUTPUT
+    {
+      "requested_locations": ["Miami", "Reykjavik"],
+      "compared": [
+        {
+          "location": "Miami, Florida, United States",
+          "temperature": 30.2,
+          "feels_like": 34.6,
+          "conditions": "clear sky",
+          "precipitation": 0,
+          "wind_speed": 13.7,
+          "humidity_pct": 72
+        },
+        {
+          "location": "Reykjavik, Capital Region, Iceland",
+          "temperature": 10.3,
+          "feels_like": 8.1,
+          "conditions": "mainly clear",
+          "precipitation": 0,
+          "wind_speed": 6.8,
+          "humidity_pct": 69
+        }
+      ],
+      "warmest": "Miami, Florida, United States",
+      "coldest": "Reykjavik, Capital Region, Iceland",
+      "wettest": "Miami, Florida, United States",
+      "currently_raining": [],
+      "failed": [],
+      "units": {
+        "temperature": "°C",
+        "wind_speed": "km/h",
+        "precipitation": "mm"
+      },
+      "source": "open-meteo"
+    }
+
+ANSWER
+    It is warmer in Miami, with a current temperature of 30.2 C, compared to
+    Reykjavik, which is at 10.3 C. Miami is the warmest of the two locations.
+
+WHAT THIS DEMONSTRATES
+    - Stretch tool: comparing weather across multiple cities.
+    - ONE tool call with both locations, not two separate get_current_weather
+      calls. That is the routing the system prompt asks for, and it is what
+      makes the comparison a single ranked result rather than two readings the
+      model has to compare itself.
+    - The tool returns the ranking (warmest/coldest/wettest) already computed,
+      so the agent reports a comparison rather than performing arithmetic on
+      raw numbers.
+
+
+================================================================================
+Q6. What's the weather in Xyzzyville?                       [GUARDRAIL]
+================================================================================
+
+REASONING
+    The user is asking about the current weather in Xyzzyville, so I need to use
+    the get_current_weather function to provide the current weather conditions
+    for that location.
+
+TOOL CALL   get_current_weather
+    {
+      "location": "Xyzzyville"
+    }
+
+TOOL OUTPUT
+    {
+      "error": "unknown_location",
+      "message": "Could not find a place called 'Xyzzyville'. Try a larger
+                  nearby city, or pass coordinates as 'lat,lon'.",
+      "requested_location": "Xyzzyville",
+      "suggestion": "Ask the user to confirm the city, or provide 'lat,lon'."
+    }
+
+ANSWER
+    I couldn't find a place called "Xyzzyville". It's possible that it's a
+    fictional location or a misspelling. Can you please confirm the city name or
+    provide coordinates as "lat,lon" so I can try to find the weather for you?
+
+WHAT THIS DEMONSTRATES
+    The full error path, end to end:
+
+    - The tool returned a structured error dict, not a stack trace and not an
+      invented forecast.
+    - The agent CALLED the tool rather than answering from its own knowledge
+      that the name looks fictional. It did not assume; it checked.
+    - It then followed the "suggestion" field almost verbatim - "confirm the
+      city name or provide coordinates as lat,lon" - which is exactly the
+      handoff the system prompt specifies. A tool failure became a clarifying
+      question instead of a guess.
+
+
+================================================================================
+Q7. Any weather alerts for London?                          [GUARDRAIL]
+================================================================================
+
+REASONING
+    The user is asking about severe weather alerts for London. Since severe
+    weather alerts are only available for the United States, I expect the
+    function to return an empty alert list with coverage 'unavailable'.
 
 TOOL CALL   get_severe_weather_alerts
     {
@@ -214,6 +345,7 @@ TOOL OUTPUT
     {
       "requested_location": "London",
       "resolved_location": "London, England, United Kingdom",
+      "alert_count": 0,
       "alerts": [],
       "coverage": "unavailable",
       "note": "No alert data available for this location. The National Weather
@@ -223,73 +355,25 @@ TOOL OUTPUT
     }
 
 ANSWER
-    There are no weather alerts available for London, as the National Weather
-    Service only covers the United States. Therefore, I couldn't retrieve any
-    alert data for this location.
+    There is no severe weather alert data available for London, as the National
+    Weather Service only covers the United States.
 
 WHAT THIS DEMONSTRATES
-    This is the most important transcript of the five.
+    This is the most important transcript of the seven.
 
     The agent said alert data is UNAVAILABLE for London. It did NOT say
     "there are no alerts for London".
 
-    That distinction matters: the alert feed is US-only, so an empty list
+    That distinction matters. The alert feed is US-only, so an empty list
     outside the United States means NO DATA, not NO DANGER. Reporting it as
     "no alerts" would be a safety-relevant falsehood - the agent would be
-    reassuring a user about severe weather it never checked. The tool
-    encodes the distinction (coverage "us" vs "unavailable") and the system
-    prompt requires the agent to honour it. Both held.
+    reassuring a user about severe weather it never actually checked. The tool
+    encodes the distinction (coverage "us" in Q3 versus "unavailable" here) and
+    the system prompt requires the agent to honour it. Both held.
 
-
-================================================================================
-DIRECT TOOL VERIFICATION
-================================================================================
-
-Called over MCP with a real client against the deployed app, to cover what the
-Q4 transcript did not exercise.
-
-1. Unresolvable location returns a clean, structured error - not a stack trace:
-
-    get_current_weather({"location": "Xyzzyville"})
-    ->
-    {
-      "error": "unknown_location",
-      "message": "Could not find a place called 'Xyzzyville'. Try a larger
-                  nearby city, or pass coordinates as 'lat,lon'.",
-      "requested_location": "Xyzzyville",
-      "suggestion": "Ask the user to confirm the city, or provide 'lat,lon'."
-    }
-
-   The "suggestion" field is what the system prompt instructs the agent to act
-   on, which is how a tool failure becomes "please clarify" rather than a
-   guess or a traceback.
-
-2. Response shape is consistent across coverage values:
-
-    Miami   coverage=us           alert_count=0   present=True
-    London  coverage=unavailable  alert_count=0   present=True
-
-   NOTE: the Q5 transcript above was captured before this fix. At that time the
-   non-US branch omitted alert_count entirely, so the field's presence depended
-   on coverage and a caller doing response["alert_count"] would have raised a
-   KeyError on every non-US location. It is now returned on both branches. The
-   transcript is left exactly as captured rather than edited to match.
-
-3. All four tools advertised over the protocol by the deployed app:
-
-    get_current_weather          args=['location']
-    get_forecast                 args=['location', 'days']
-    should_i_bring_an_umbrella   args=['location']
-    get_severe_weather_alerts    args=['location']
-
-4. Prediction-tool decision branches, verified with synthetic forecasts so that
-   branches today's real weather cannot produce are still covered:
-
-    pop=  5%  sum= 0.0mm  wind=10  -> no   below both thresholds
-    pop= 40%  sum= 1.0mm  wind=10  -> yes  exact boundary, inclusive
-    pop= 95%  sum=14.0mm  wind=12  -> yes  soaking: "expect to get wet anyway"
-    pop= 90%  sum= 6.0mm  wind=48  -> no   wind overrides rain (umbrella inverts)
-    pop= 95%  sum=20.0mm  wind=60  -> no   wind still wins over soaking
+    Compare the answers directly:
+        Q3 (Miami,  coverage "us")          -> "There are no severe weather alerts"
+        Q7 (London, coverage "unavailable") -> "no severe weather alert data available"
 
 
 ================================================================================
@@ -392,7 +476,7 @@ Optional stretch: dashboard app .............................. deployed, RUNNING
 Registered as an external MCP ................................ Unity AI Gateway, Active
 Agent using the MCP server ................................... AI Playground, Llama 3.3 70B
 System prompt with guardrails ................................ SYSTEM_PROMPT.md
-At least 3 NL questions with tool calls + answers ............ 5 above
+At least 3 NL questions with tool calls + answers ............ 7 above
 No secrets committed, no hardcoded API keys .................. none exist (see below)
 README with tools, setup, API + auth method .................. README.md
 
