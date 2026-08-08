@@ -377,6 +377,56 @@ WHAT THIS DEMONSTRATES
 
 
 ================================================================================
+DIRECT TOOL VERIFICATION
+================================================================================
+
+Called over MCP with a real client against the deployed app, covering branches
+the seven transcripts above do not reach.
+
+1. Unresolvable location returns a clean, structured error - not a stack trace:
+
+    get_current_weather({"location": "Xyzzyville"})
+    ->
+    {
+      "error": "unknown_location",
+      "message": "Could not find a place called 'Xyzzyville'. Try a larger
+                  nearby city, or pass coordinates as 'lat,lon'.",
+      "requested_location": "Xyzzyville",
+      "suggestion": "Ask the user to confirm the city, or provide 'lat,lon'."
+    }
+
+   The "suggestion" field is what the system prompt instructs the agent to act
+   on, which is how a tool failure becomes "please clarify" rather than a
+   guess or a traceback. Q6 above shows the agent doing exactly that.
+
+2. Response shape is consistent across coverage values:
+
+    Miami   coverage=us           alert_count=0   present=True
+    London  coverage=unavailable  alert_count=0   present=True
+
+   An earlier version omitted alert_count on the non-US branch, so the field's
+   presence depended on coverage and a caller doing response["alert_count"]
+   would have raised a KeyError on every non-US location. It is now returned on
+   both branches - visible in the Q7 transcript above, captured after the fix.
+
+3. All four tools advertised over the protocol by the deployed app:
+
+    get_current_weather          args=['location']
+    get_forecast                 args=['location', 'days']
+    should_i_bring_an_umbrella   args=['location']
+    get_severe_weather_alerts    args=['location']
+
+4. Prediction-tool decision branches, verified with synthetic forecasts so that
+   branches today's real weather cannot produce are still covered:
+
+    pop=  5%  sum= 0.0mm  wind=10  -> no   below both thresholds
+    pop= 40%  sum= 1.0mm  wind=10  -> yes  exact boundary, inclusive
+    pop= 95%  sum=14.0mm  wind=12  -> yes  soaking: "expect to get wet anyway"
+    pop= 90%  sum= 6.0mm  wind=48  -> no   wind overrides rain (umbrella inverts)
+    pop= 95%  sum=20.0mm  wind=60  -> no   wind still wins over soaking
+
+
+================================================================================
 STRETCH WORK (extra credit)
 ================================================================================
 
