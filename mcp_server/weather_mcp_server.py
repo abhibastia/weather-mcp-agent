@@ -28,14 +28,17 @@ Run locally:
     python weather_mcp_server.py
 """
 
+import functools
 import html
 import logging
 import os
+import time
 
 from fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 
+import call_log
 import weather_broker
 from weather_broker import UnknownLocationError, WeatherAPIError
 
@@ -51,6 +54,51 @@ UMBRELLA_PROBABILITY_PCT = 40      # chance of precipitation worth acting on
 UMBRELLA_ACCUMULATION_MM = 1.0     # enough rain to actually get you wet
 SOAKING_ACCUMULATION_MM = 10.0     # "an umbrella won't be enough" territory
 WINDY_KMH = 35.0                   # above this an umbrella is a liability
+
+
+def logged(fn):
+    """Record each tool call to Lakebase for the dashboard app.
+
+    Wraps the function *below* @mcp.tool so FastMCP still introspects the real
+    signature and docstring - decorating above it would register the wrapper's
+    (*args, **kwargs) signature and the agent would lose the argument schema.
+
+    The logging call cannot raise (see call_log.record), so a Lakebase outage
+    degrades to "no dashboard history", never to "the weather tool failed".
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        started = time.perf_counter()
+        result = fn(*args, **kwargs)
+        duration_ms = int((time.perf_counter() - started) * 1000)
+
+        outcome = result.get("error", "ok") if isinstance(result, dict) else "ok"
+        summary = None
+        if isinstance(result, dict):
+            # One human-readable line per tool, so the dashboard shows what the
+            # call actually produced rather than a raw JSON blob.
+            summary = (
+                result.get("message")
+                or result.get("reason")
+                or (f"{result.get('conditions')}, {result.get('temperature')}"
+                    if result.get("conditions") and result.get("temperature") is not None else None)
+                # Historical results carry temp_max/temp_min rather than a
+                # single `temperature`, so they need their own branch or the
+                # dashboard shows a blank row for every archive lookup.
+                or (f"{result.get('conditions')}, {result.get('temp_min')}-{result.get('temp_max')}"
+                    f" on {result.get('date')}"
+                    if result.get("conditions") and result.get("temp_max") is not None else None)
+                or (f"{result.get('alert_count')} alert(s), coverage {result.get('coverage')}"
+                    if result.get("coverage") else None)
+                or (f"warmest {result.get('warmest')}" if result.get("warmest") else None)
+                or (f"{result.get('days')} day forecast" if result.get("days") else None)
+            )
+
+        call_log.record(fn.__name__, kwargs or {"args": list(args)},
+                        outcome, summary, duration_ms)
+        return result
+
+    return wrapper
 
 
 def _error(exc: Exception, location: str) -> dict:
@@ -84,6 +132,7 @@ def _error(exc: Exception, location: str) -> dict:
 
 
 @mcp.tool
+@logged
 def get_current_weather(location: str) -> dict:
     """
     Get current weather conditions for a location.
@@ -105,6 +154,7 @@ def get_current_weather(location: str) -> dict:
 
 
 @mcp.tool
+@logged
 def get_forecast(location: str, days: int = 3) -> dict:
     """
     Get a multi-day daily forecast for a location.
@@ -127,6 +177,7 @@ def get_forecast(location: str, days: int = 3) -> dict:
 
 
 @mcp.tool
+@logged
 def should_i_bring_an_umbrella(location: str) -> dict:
     """
     Decide whether someone should take an umbrella today, with reasoning.
@@ -227,6 +278,7 @@ def should_i_bring_an_umbrella(location: str) -> dict:
 
 
 @mcp.tool
+@logged
 def get_severe_weather_alerts(location: str) -> dict:
     """
     Get active severe-weather alerts for a location (United States only).
@@ -368,6 +420,124 @@ def build_app():
     # on the first request rather than failing loudly at startup.
     rewrite.lifespan = mcp_asgi.lifespan
     return rewrite
+
+
+@mcp.tool
+@logged
+def get_historical_weather(location: str, date: str) -> dict:
+    """
+    Look up observed weather for a past date.
+
+    Uses Open-Meteo's ERA5 reanalysis archive, which is a different dataset
+    from the forecast model. The archive trails real time by roughly five days,
+    so very recent dates are rejected with an explanation rather than returning
+    an empty result the agent would have to interpret.
+
+    Args:
+        location: City name, city with region, or "lat,lon" coordinates.
+        date: Calendar date as "YYYY-MM-DD". Must be in the past.
+
+    Returns:
+        A dict with resolved_location, date, conditions, temp_max, temp_min,
+        temp_mean, precipitation_sum, wind_speed_max and units. On failure, a
+        dict with an "error" key - including when the date is in the future or
+        too recent for the archive.
+    """
+    try:
+        return weather_broker.get_historical_weather(location, date)
+    except ValueError as exc:
+        # Distinct from unknown_location: the place may be fine and the *date*
+        # wrong, so the agent needs a different remedy than "confirm the city".
+        if not isinstance(exc, UnknownLocationError):
+            return {
+                "error": "invalid_date",
+                "message": str(exc),
+                "requested_location": location,
+                "requested_date": date,
+                "suggestion": "Tell the user the date is not usable and why. "
+                              "Use get_forecast for today or future dates.",
+            }
+        return _error(exc, location)
+    except Exception as exc:
+        return _error(exc, location)
+
+
+@mcp.tool
+@logged
+def compare_weather(locations: list[str]) -> dict:
+    """
+    Compare current weather across several cities and rank them.
+
+    Applies judgment rather than returning parallel readings: the cities are
+    ranked warmest-first, and the response names the warmest, the coldest, the
+    wettest, and any that are currently seeing precipitation, so the agent can
+    answer "which of these is nicest right now" directly.
+
+    A location that cannot be resolved does not sink the comparison. It is
+    reported in "failed" while the rest are still compared, so the agent can
+    answer for the cities it does have and say which one it could not.
+
+    Args:
+        locations: Between 2 and 8 city names, regions, or "lat,lon" pairs.
+
+    Returns:
+        A dict with "compared" (ranked warmest-first), "warmest", "coldest",
+        "wettest", "currently_raining", "failed", and units. On failure, a dict
+        with an "error" key.
+    """
+    if not isinstance(locations, list) or len(locations) < 2:
+        return {
+            "error": "invalid_arguments",
+            "message": "compare_weather needs a list of at least 2 locations.",
+            "suggestion": "Ask the user which cities they want compared.",
+        }
+
+    try:
+        results, failures = weather_broker.get_current_for_many(locations)
+    except Exception as exc:
+        return _error(exc, ", ".join(map(str, locations)))
+
+    if not results:
+        return {
+            "error": "no_locations_resolved",
+            "message": "None of the given locations could be resolved.",
+            "failed": failures,
+            "suggestion": "Ask the user to confirm the city names.",
+        }
+
+    def temp(row: dict) -> float:
+        value = row.get("temperature")
+        return float(value) if value is not None else float("-inf")
+
+    def rain(row: dict) -> float:
+        value = row.get("precipitation")
+        return float(value) if value is not None else 0.0
+
+    ranked = sorted(results, key=temp, reverse=True)
+    raining = [r["resolved_location"] for r in results if rain(r) > 0]
+
+    return {
+        "requested_locations": locations,
+        "compared": [
+            {
+                "location": r["resolved_location"],
+                "temperature": r.get("temperature"),
+                "feels_like": r.get("feels_like"),
+                "conditions": r.get("conditions"),
+                "precipitation": r.get("precipitation"),
+                "wind_speed": r.get("wind_speed"),
+                "humidity_pct": r.get("humidity_pct"),
+            }
+            for r in ranked
+        ],
+        "warmest": ranked[0]["resolved_location"],
+        "coldest": ranked[-1]["resolved_location"],
+        "wettest": max(results, key=rain)["resolved_location"],
+        "currently_raining": raining,
+        "failed": failures,
+        "units": results[0].get("units", {}),
+        "source": "open-meteo",
+    }
 
 
 if __name__ == "__main__":
