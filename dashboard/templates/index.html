@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather MCP — Agent Activity</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg:#ffffff; --fg:#16181d; --muted:#5d636e;
+    --line:rgba(128,128,128,.28); --card:rgba(128,128,128,.07);
+    --ok:#137333; --err:#b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --fg:#e6e8ee; --muted:#9aa1ad; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .wrap { max-width:66rem; margin:0 auto; padding:2.5rem 1.25rem 4rem; }
+  h1 { font-size:1.45rem; margin:0 0 .2rem; }
+  .sub { color:var(--muted); margin:0 0 1.75rem; }
+  .cards { display:grid; gap:.75rem; grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr));
+           margin-bottom:1.75rem; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:.6rem; padding:.8rem .9rem; }
+  .card .n { font-size:1.6rem; font-weight:600; }
+  .card .l { color:var(--muted); font-size:.8rem; text-transform:uppercase; letter-spacing:.04em; }
+  h2 { font-size:1rem; text-transform:uppercase; letter-spacing:.05em;
+       color:var(--muted); margin:2rem 0 .6rem; }
+  .scroll { overflow-x:auto; border:1px solid var(--line); border-radius:.6rem; }
+  table { border-collapse:collapse; width:100%; font-size:.9rem; }
+  th,td { text-align:left; padding:.55rem .7rem; border-bottom:1px solid var(--line);
+          white-space:nowrap; vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:.78rem;
+       text-transform:uppercase; letter-spacing:.04em; }
+  tr:last-child td { border-bottom:none; }
+  td.wrap-cell { white-space:normal; min-width:16rem; }
+  code { font-size:.86em; }
+  .pill { display:inline-block; padding:.1rem .5rem; border-radius:1rem; font-size:.78rem; }
+  .pill.ok { background:rgba(19,115,51,.15); color:var(--ok); }
+  .pill.err { background:rgba(179,38,30,.15); color:var(--err); }
+  .empty, .error { border:1px solid var(--line); border-radius:.6rem;
+                   padding:1.1rem 1.25rem; color:var(--muted); }
+  .error { border-color:rgba(179,38,30,.5); }
+  .error b { color:var(--err); }
+  .bar { height:.4rem; background:var(--card); border-radius:1rem; overflow:hidden; min-width:5rem; }
+  .bar > span { display:block; height:100%; background:var(--ok); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Weather MCP — Agent Activity</h1>
+  <p class="sub">Every tool call the agent has made through the weather MCP server.</p>
+
+  {% if error %}
+    <div class="error">
+      <b>Could not read the call log.</b><br>
+      <code>{{ error }}</code>
+      <p style="margin-bottom:0">
+        The most likely cause is that this app's service principal has not been
+        granted <code>READ</code> on the <code>database</code> secret scope. The
+        MCP server itself is unaffected — only this dashboard reads the log.
+      </p>
+    </div>
+  {% else %}
+
+    <div class="cards">
+      <div class="card"><div class="n">{{ stats.total_calls or 0 }}</div><div class="l">Tool calls</div></div>
+      <div class="card"><div class="n">{{ stats.ok_calls or 0 }}</div><div class="l">Succeeded</div></div>
+      <div class="card"><div class="n">{{ stats.error_calls or 0 }}</div><div class="l">Errors</div></div>
+      <div class="card"><div class="n">{{ stats.locations or 0 }}</div><div class="l">Locations</div></div>
+      <div class="card"><div class="n">{{ stats.avg_ms or 0 }}<span style="font-size:.9rem"> ms</span></div><div class="l">Avg latency</div></div>
+    </div>
+
+    <h2>Tool usage</h2>
+    {% if stats.by_tool %}
+      {% set top = stats.by_tool[0].calls %}
+      <div class="scroll"><table>
+        <tr><th>Tool</th><th>Calls</th><th style="width:45%">Share</th></tr>
+        {% for row in stats.by_tool %}
+          <tr>
+            <td><code>{{ row.tool_name }}</code></td>
+            <td>{{ row.calls }}</td>
+            <td><div class="bar"><span style="width: {{ (row.calls / top * 100) | round(1) }}%"></span></div></td>
+          </tr>
+        {% endfor %}
+      </table></div>
+    {% else %}
+      <div class="empty">No tool calls recorded yet.</div>
+    {% endif %}
+
+    <h2>Recent calls</h2>
+    {% if calls %}
+      <div class="scroll"><table>
+        <tr><th>When (UTC)</th><th>Tool</th><th>Location</th><th>Outcome</th><th>Result</th><th>ms</th></tr>
+        {% for c in calls %}
+          <tr>
+            <td>{{ c.called_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td><code>{{ c.tool_name }}</code></td>
+            <td>{{ c.location or '—' }}</td>
+            <td>
+              {% if c.outcome == 'ok' %}
+                <span class="pill ok">ok</span>
+              {% else %}
+                <span class="pill err">{{ c.outcome }}</span>
+              {% endif %}
+            </td>
+            <td class="wrap-cell">{{ c.summary or '—' }}</td>
+            <td>{{ c.duration_ms if c.duration_ms is not none else '—' }}</td>
+          </tr>
+        {% endfor %}
+      </table></div>
+    {% else %}
+      <div class="empty">
+        No calls yet. Ask the agent a weather question in the Playground and
+        reload this page.
+      </div>
+    {% endif %}
+
+  {% endif %}
+</div>
+</body>
+</html>

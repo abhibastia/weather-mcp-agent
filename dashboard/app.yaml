@@ -1,0 +1,22 @@
+command:
+  - "python"
+  - "app.py"
+
+resources:
+  - name: requirements
+    source:
+      path: ./requirements.txt
+
+env:
+  # Reads the tool-call log the MCP server writes. Only the scope and key NAMES
+  # live here - the connection URL stays in the Databricks secret. This app's
+  # service principal must be granted READ on this scope, or the dashboard
+  # renders an explanatory error instead of data.
+  - name: LAKEBASE_SECRET_SCOPE
+    value: "database"
+  - name: LAKEBASE_SECRET_KEY
+    value: "lakebase-url"
+  - name: MCP_CALL_LOG_TABLE
+    value: "mcp_tool_calls"
+  - name: DASHBOARD_LIMIT
+    value: "50"
