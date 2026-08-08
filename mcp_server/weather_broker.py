@@ -27,6 +27,7 @@ can say "I couldn't resolve that location, can you be more specific?" instead of
 surfacing a stack trace or, worse, inventing the weather.
 """
 
+import datetime
 import logging
 import os
 import re
@@ -38,6 +39,9 @@ logger = logging.getLogger("weather-broker")
 
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
+# Separate host: the archive is a different dataset (ERA5 reanalysis), not the
+# forecast model, and the forecast endpoint will not serve past dates.
+OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 NWS_BASE_URL = os.environ.get("NWS_API_BASE_URL", "https://api.weather.gov").rstrip("/")
 
 # api.weather.gov asks callers to identify themselves and may reject anonymous
@@ -48,7 +52,9 @@ NWS_USER_AGENT = os.environ.get(
 )
 
 DEFAULT_TIMEOUT = 20
-MAX_FORECAST_DAYS = 16  # Open-Meteo's own ceiling
+MAX_FORECAST_DAYS = 16   # Open-Meteo's own ceiling
+ARCHIVE_LAG_DAYS = 5     # ERA5 reanalysis trails real time by ~5 days
+MAX_COMPARE_LOCATIONS = 8
 
 
 class UnknownLocationError(ValueError):
@@ -309,6 +315,88 @@ def get_daily_forecast(location: str, days: int = 3) -> dict:
     }
 
 
+def get_historical_weather(location: str, date: str) -> dict:
+    """Fetch observed weather for a past date from Open-Meteo's archive.
+
+    Args:
+        location: City name, city with region, or "lat,lon".
+        date: Calendar date as YYYY-MM-DD.
+
+    Raises:
+        ValueError: if the date is malformed or not in the past.
+        WeatherAPIError: if the archive has no data for that date.
+    """
+    try:
+        requested = datetime.date.fromisoformat(str(date).strip())
+    except (TypeError, ValueError):
+        raise ValueError(f"date must be YYYY-MM-DD, got {date!r}")
+
+    # The archive is a reanalysis product and lags real time by about five
+    # days. Asking for yesterday returns an empty series rather than an error,
+    # which would surface to the agent as "no data" with no explanation - so
+    # reject it here with a message that says what to do instead.
+    today = datetime.date.today()
+    if requested >= today:
+        raise ValueError(
+            f"{date} is not in the past. Use get_forecast for today or future dates."
+        )
+    if (today - requested).days < ARCHIVE_LAG_DAYS:
+        raise ValueError(
+            f"{date} is too recent for the archive, which lags about "
+            f"{ARCHIVE_LAG_DAYS} days. Try a date before "
+            f"{today - datetime.timedelta(days=ARCHIVE_LAG_DAYS)}."
+        )
+
+    place = resolve_location(location)
+    payload = _get(
+        OPEN_METEO_ARCHIVE_URL,
+        {
+            "latitude": place["latitude"],
+            "longitude": place["longitude"],
+            "start_date": date,
+            "end_date": date,
+            "daily": ",".join(
+                [
+                    "weather_code",
+                    "temperature_2m_max",
+                    "temperature_2m_min",
+                    "temperature_2m_mean",
+                    "precipitation_sum",
+                    "wind_speed_10m_max",
+                ]
+            ),
+            "timezone": "auto",
+        },
+    )
+
+    daily = payload.get("daily") or {}
+    units = payload.get("daily_units") or {}
+    if not (daily.get("time") or []):
+        raise WeatherAPIError(f"Archive returned no observations for {date}")
+
+    def first(name: str):
+        values = daily.get(name) or []
+        return values[0] if values else None
+
+    return {
+        "requested_location": location,
+        "resolved_location": _label(place),
+        "date": date,
+        "conditions": describe_weather_code(first("weather_code")),
+        "temp_max": first("temperature_2m_max"),
+        "temp_min": first("temperature_2m_min"),
+        "temp_mean": first("temperature_2m_mean"),
+        "precipitation_sum": first("precipitation_sum"),
+        "wind_speed_max": first("wind_speed_10m_max"),
+        "units": {
+            "temperature": units.get("temperature_2m_max", "°C"),
+            "precipitation": units.get("precipitation_sum", "mm"),
+            "wind_speed": units.get("wind_speed_10m_max", "km/h"),
+        },
+        "source": "open-meteo-archive",
+    }
+
+
 def get_active_alerts(location: str) -> dict:
     """Fetch active NWS severe-weather alerts for a location (US only).
 
@@ -369,6 +457,30 @@ def get_active_alerts(location: str) -> dict:
         "coverage": "us",
         "source": "nws",
     }
+
+
+def get_current_for_many(locations: list[str]) -> tuple[list[dict], list[dict]]:
+    """Fetch current conditions for several locations at once.
+
+    Returns (successes, failures). One bad location must not sink the whole
+    comparison - the agent should still be able to compare the cities that did
+    resolve, and say which one it could not.
+
+    Fetches are sequential: Open-Meteo is rate-limited per IP, and at the
+    handful of cities a comparison involves the added latency is smaller than
+    the risk of tripping a 429.
+    """
+    successes, failures = [], []
+    for location in locations[:MAX_COMPARE_LOCATIONS]:
+        try:
+            successes.append(get_current_conditions(location))
+        except UnknownLocationError as exc:
+            failures.append({"location": location, "error": "unknown_location",
+                             "message": str(exc)})
+        except WeatherAPIError as exc:
+            failures.append({"location": location, "error": "weather_api_unavailable",
+                             "message": str(exc)})
+    return successes, failures
 
 
 def _label(place: dict) -> str:
