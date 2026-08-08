@@ -12,9 +12,11 @@ Agent
     Databricks AI Playground, model "Meta Llama 3.3 70B Instruct"
     (databricks-meta-llama-3-3-70b-instruct), with the MCP server attached
     as a tool and SYSTEM_PROMPT.md pasted as the system prompt.
-Tools exposed
+Dashboard app (stretch)
+    https://weather-mcp-dashboard-7474646797973312.aws.databricksapps.com
+Tools exposed (6 - three required, three stretch)
     get_current_weather, get_forecast, should_i_bring_an_umbrella,
-    get_severe_weather_alerts
+    get_severe_weather_alerts, get_historical_weather, compare_weather
 Date
     2026-08-08
 
@@ -291,17 +293,102 @@ Q4 transcript did not exercise.
 
 
 ================================================================================
+STRETCH WORK (extra credit)
+================================================================================
+
+The brief lists three optional stretch tools - severe weather alerts, historical
+weather lookup, comparing weather across multiple cities - and an optional
+dashboard app. All four are implemented.
+
+1. SEVERE WEATHER ALERTS - get_severe_weather_alerts
+   Second data source (National Weather Service). Demonstrated in Q3 and Q5
+   above, including the US-only coverage guardrail.
+
+2. HISTORICAL WEATHER LOOKUP - get_historical_weather(location, date)
+   Open-Meteo's ERA5 reanalysis archive, a different dataset from the forecast
+   model. Verified through the deployed MCP server:
+
+     get_historical_weather("Chicago", "2026-07-10")
+     -> light drizzle, 21.7-24.8 C, 0.3 mm precipitation
+
+   The archive trails real time by about five days, so recent dates return an
+   empty series rather than an error. That would reach the agent as unexplained
+   "no data", so the tool rejects them with a reason instead:
+
+     "2099-01-01"  -> invalid_date: not in the past. Use get_forecast instead.
+     today         -> invalid_date: not in the past. Use get_forecast instead.
+     2 days ago    -> invalid_date: too recent for the archive, which lags
+                      about 5 days. Try a date before <date>.
+     "not-a-date"  -> invalid_date: date must be YYYY-MM-DD
+     bad location  -> unknown_location (distinct from invalid_date, because the
+                      remedy differs: confirm the city vs. change the date)
+
+3. COMPARE WEATHER ACROSS CITIES - compare_weather(locations)
+   Ranks cities rather than returning parallel readings, so the agent can answer
+   "which of these is nicest right now" directly. Verified live:
+
+     compare_weather(["Chicago","Miami","Reykjavik","Mumbai"])
+     ->  warmest Miami, Florida, United States
+         coldest Reykjavik, Capital Region, Iceland
+         wettest Mumbai, Maharashtra, India
+         currently raining: ["Mumbai, Maharashtra, India"]
+
+         30.4 C  Miami, Florida, United States        clear sky
+         26.3 C  Mumbai, Maharashtra, India           light drizzle
+         24.7 C  Chicago, Illinois, United States     clear sky
+         10.7 C  Reykjavik, Capital Region, Iceland   partly cloudy
+
+   One unresolvable city does not sink the comparison:
+
+     compare_weather(["Chicago","Xyzzyville","Tokyo"])
+     -> compared 2 cities, failed ["Xyzzyville"], warmest Chicago
+
+   Fewer than two locations is rejected with invalid_arguments rather than
+   silently returning a one-item "comparison".
+
+4. DASHBOARD APP
+   https://weather-mcp-dashboard-7474646797973312.aws.databricksapps.com
+
+   A separate Databricks App showing recent agent tool calls, tool usage,
+   error counts and latency - mirroring the reference repo's mcp_server/ +
+   dashboard/ split. The two apps share no memory, so the MCP server writes one
+   row per tool call to Lakebase and the dashboard reads them back.
+
+   Verified live against the deployed dashboard:
+
+     GET /healthz    -> 200 {"status":"ok"}
+     GET /           -> 200, renders the table, no error page
+     GET /api/calls  -> 7 calls | total=7 ok=6 err=1 locations=6 avg=759ms
+
+       compare_weather              2
+       get_current_weather          2
+       get_severe_weather_alerts    1
+       should_i_bring_an_umbrella   1
+       get_historical_weather       1
+
+   Logging is best-effort and CANNOT break a tool call. If the secret is
+   missing, the ACL was never granted, or Postgres is unreachable, record()
+   warns once and disables itself for the process while the weather tools keep
+   answering. This path was exercised accidentally during development, when
+   psycopg2 was not yet installed: one warning was logged and all five tool
+   calls still succeeded.
+
+
+================================================================================
 REQUIREMENTS COVERAGE
 ================================================================================
 
 MCP server built with FastMCP, @mcp.tool, streamable HTTP ... weather_mcp_server.py
 Separate adapter module, no raw requests inside a tool ....... weather_broker.py
 requirements.txt + app.yaml, deployed as its own App ......... deployed, RUNNING
-Minimum 3 tools .............................................. 4 tools
+Minimum 3 tools .............................................. 6 tools
   - current conditions ....................................... get_current_weather
   - forecast ................................................. get_forecast
   - prediction/recommendation with real logic ................ should_i_bring_an_umbrella
   - stretch: severe weather alerts (2nd data source) ......... get_severe_weather_alerts
+  - stretch: historical weather lookup ....................... get_historical_weather
+  - stretch: compare weather across cities ................... compare_weather
+Optional stretch: dashboard app .............................. deployed, RUNNING
 Registered as an external MCP ................................ Unity AI Gateway, Active
 Agent using the MCP server ................................... AI Playground, Llama 3.3 70B
 System prompt with guardrails ................................ SYSTEM_PROMPT.md

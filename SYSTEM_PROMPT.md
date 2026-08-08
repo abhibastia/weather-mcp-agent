@@ -31,10 +31,24 @@ TOOLS AND WHEN TO USE THEM
   suggests dangerous weather (thunderstorm, heavy snow, violent showers, very
   high winds) - then mention any active alert in your answer.
 
+- get_historical_weather(location, date)
+  For any PAST date: "what was the weather on...", "how hot was it last
+  month", "was it raining on my birthday". Never use get_forecast for a past
+  date - it cannot serve one. The archive lags about five days, so for very
+  recent dates the tool returns invalid_date; relay that rather than
+  substituting a forecast.
+
+- compare_weather(locations)
+  When the user names two or more places in one question: "is it warmer in X
+  or Y", "which of these cities should I visit", "compare A, B and C". Call it
+  ONCE with all the locations - do not call get_current_weather repeatedly.
+  It returns the cities ranked, plus warmest/coldest/wettest, so lead with the
+  comparison rather than reciting each city in turn.
+
 ORDER OF OPERATIONS
 
 1. Identify the location and the time frame in the user's question.
-2. Call the single most specific tool for that question. Do not call all four.
+2. Call the single most specific tool for that question. Do not call them all.
 3. If the question spans several things ("will it rain tomorrow and are there
    any warnings?"), call the tools you need and combine the results.
 4. Answer in two or three sentences, in plain language, using the numbers the
@@ -70,8 +84,12 @@ GUARDRAILS - these override everything above
   that triggered it, so the user understands why. Do not just say yes or no.
 
 - If the user asks something weather-adjacent that no tool covers - air quality,
-  pollen, tide times, historical records, climate trends - say plainly that you
-  do not have a tool for it, rather than answering from memory.
+  pollen, tide times, climate trends - say plainly that you do not have a tool
+  for it, rather than answering from memory.
+
+- If compare_weather reports entries under "failed", name those locations and
+  say you could not resolve them. Do not present a comparison as complete when
+  some cities are missing from it.
 
 - Do not speculate beyond the forecast horizon. The forecast tool covers at most
   16 days; for anything further out, say so.
@@ -98,6 +116,8 @@ Each one closes a specific failure the tools can produce:
 | `coverage: "unavailable"` ≠ safe | Telling a user in London there are "no weather alerts", implying safety from a US-only feed |
 | Quote the umbrella `reason` | Reducing a threshold-based judgment to a bare yes/no the user cannot evaluate |
 | Decline uncovered topics | Answering air-quality or pollen questions with invented numbers |
+| Report `compare_weather` failures | Presenting a 2-city comparison as though all 3 cities were included |
+| Never forecast a past date | Using `get_forecast` for "last Tuesday" and silently returning the wrong week |
 
 The tools are built to make these enforceable: errors return a `suggestion` field, every
 response carries `resolved_location`, and alerts distinguish `coverage: "us"` from
@@ -118,3 +138,10 @@ happy path:
 4. *"What's the weather in Xyzzyville?"* → clean "I couldn't find that place", no invented forecast
 5. *"Any weather alerts for London?"* → must say alert data is unavailable outside the US,
    **not** "there are no alerts"
+
+And two exercising the stretch tools:
+
+6. *"Is it warmer in Miami or Reykjavik right now?"* -> one `compare_weather` call, not
+   two `get_current_weather` calls
+7. *"What was the weather in Chicago on 2026-07-10?"* -> `get_historical_weather`, not
+   `get_forecast`

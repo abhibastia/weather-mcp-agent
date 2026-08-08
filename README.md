@@ -3,11 +3,26 @@
 A [Model Context Protocol](https://modelcontextprotocol.io) server exposing weather
 tools to a Databricks agent, deployed as a Databricks App.
 
-**Live App URL:** <https://mcp-server-weather-service-7474646797973312.aws.databricksapps.com>
-**MCP endpoint (register this):** `https://mcp-server-weather-service-7474646797973312.aws.databricksapps.com/mcp`
+**Repository:** <https://github.com/abhibastia/weather-mcp-agent> (branch `main`)
 
-Opening the App URL in a browser shows a status page listing the live tools. Agents
+| | |
+|---|---|
+| **MCP server App** | <https://mcp-server-weather-service-7474646797973312.aws.databricksapps.com> |
+| **MCP endpoint** (register this) | `https://mcp-server-weather-service-7474646797973312.aws.databricksapps.com/mcp` |
+| **Dashboard App** (stretch) | <https://weather-mcp-dashboard-7474646797973312.aws.databricksapps.com> |
+
+```bash
+git clone https://github.com/abhibastia/weather-mcp-agent.git
+```
+
+Opening the MCP App URL in a browser shows a status page listing the live tools. Agents
 talk to `/mcp`; `/health` is a liveness probe.
+
+> **The `/mcp` suffix matters.** Databricks stores the endpoint with `/mcp` already
+> appended and then appends `/mcp` again when calling it, so the server also answers on
+> `/mcp/mcp`. Without that, tool listing fails with
+> `Unrecognized token 'Not' ... Response: Not Found` — a 404 body being JSON-parsed.
+> See `build_app()` in `weather_mcp_server.py`.
 
 ---
 
@@ -24,8 +39,11 @@ flowchart LR
         S --> B
     end
 
-    B --> OM["Open-Meteo API<br/>conditions + forecast<br/><i>no API key</i>"]
+    B --> OM["Open-Meteo<br/>conditions, forecast,<br/>geocoding, archive<br/><i>no API key</i>"]
     B --> NWS["NWS API<br/>severe alerts<br/><i>User-Agent only</i>"]
+
+    S -. "logs each call<br/>(best effort)" .-> LB[("Lakebase<br/>mcp_tool_calls")]
+    LB --> D["Databricks App: weather-mcp-dashboard<br/>recent calls, tool usage, errors"]
 ```
 
 The split is deliberate and is what the tool layer's thinness buys: **no `requests`
@@ -43,6 +61,11 @@ with a plain Python call — no MCP client, no agent, no deployed app.
 | `get_forecast` | `location`, `days` (1–16, default 3) | per-day high/low, precipitation sum + probability, max wind, conditions |
 | `should_i_bring_an_umbrella` | `location` | `yes`/`no`, confidence, a quotable reason, the thresholds applied, and the forecast figures judged |
 | `get_severe_weather_alerts` | `location` | active NWS alerts with severity, urgency, headline, instruction, expiry (US only) |
+| `get_historical_weather` | `location`, `date` | observed conditions for a past date from the ERA5 archive |
+| `compare_weather` | `locations` (2–8) | cities ranked warmest-first, plus warmest / coldest / wettest / currently raining |
+
+The last three are the brief's **stretch tools** (severe alerts, historical lookup,
+multi-city comparison).
 
 `location` accepts a city (`"Chicago"`), city with region (`"Austin, Texas"`), or raw
 coordinates (`"41.88,-87.63"`) as an escape hatch when the geocoder doesn't know a place.
@@ -178,9 +201,45 @@ databricks apps deploy mcp-server-weather-service \
 | `mcp_server/weather_mcp_server.py` | FastMCP server — four `@mcp.tool` wrappers, landing page, `/health` |
 | `mcp_server/weather_broker.py` | Adapter: all HTTP calls, geocoding, WMO code translation, parsing |
 | `mcp_server/app.yaml` | Databricks App manifest (command, requirements resource, env) |
-| `mcp_server/requirements.txt` | `fastmcp`, `requests`, `databricks-sdk` — nothing heavier |
+| `mcp_server/call_log.py` | Best-effort tool-call logging to Lakebase (never raises) |
+| `mcp_server/requirements.txt` | `fastmcp`, `requests`, `uvicorn`, `psycopg2`, `databricks-sdk` |
+| `dashboard/app.py` | Stretch: Flask dashboard of recent agent tool calls |
+| `dashboard/templates/index.html` | Dashboard UI |
 | `SYSTEM_PROMPT.md` | The agent's system prompt |
 | `RESULTS.txt` | Agent transcripts: questions, tool calls, answers |
+
+---
+
+## Stretch: the dashboard app
+
+Deployed separately, mirroring the reference repo's `mcp_server/` + `dashboard/` split:
+
+**<https://weather-mcp-dashboard-7474646797973312.aws.databricksapps.com>**
+
+It shows what the agent has actually been asking for — recent tool calls, which tools
+get used, error counts, and latency. `GET /api/calls` returns the same data as JSON.
+
+The two apps share no memory, which is exactly why the call log lives in Lakebase:
+`mcp_server/call_log.py` writes one row per tool call, the dashboard reads them back.
+
+**Logging is best-effort and cannot break a tool call.** If the secret is missing, the
+ACL was never granted, or Postgres is unreachable, `record()` warns *once* and disables
+itself for the process — the weather tools keep answering. An agent losing the ability
+to report the weather because a telemetry insert failed would be strictly worse than
+losing the telemetry. This path was exercised accidentally during development (a missing
+`psycopg2`) and behaved correctly: one warning, zero failed tool calls.
+
+Set `MCP_CALL_LOG_ENABLED=false` to run the MCP server with no Lakebase dependency at all.
+
+> The dashboard app's service principal needs `READ` on the `database` secret scope.
+> Granting it to the `users` group is **not** enough — app service principals are not
+> members of `users`. Without an explicit ACL the dashboard renders an explanatory error
+> instead of data:
+> ```bash
+> SP=$(databricks apps get weather-mcp-dashboard --profile <profile> -o json \
+>       | python3 -c 'import json,sys; print(json.load(sys.stdin)["service_principal_client_id"])')
+> databricks secrets put-acl database "$SP" READ --profile <profile>
+> ```
 
 ---
 
@@ -192,6 +251,12 @@ databricks apps deploy mcp-server-weather-service \
   region hint is not sent upstream. `resolved_location` exposes what actually matched.
 - **Forecast horizon is capped at 16 days** by Open-Meteo. Larger values are clamped
   rather than rejected, so the agent gets a usable answer instead of an error.
+- **The historical archive lags ~5 days.** It is ERA5 reanalysis, not the forecast
+  model, so very recent dates are rejected with an explanation rather than returning an
+  empty series the agent would have to interpret.
+- **`compare_weather` fetches sequentially.** Open-Meteo is rate-limited per IP, and at
+  2–8 cities the added latency is smaller than the risk of a 429. It is capped at 8
+  locations.
 - **No caching.** Every tool call hits the upstream API. Fine at demo volume and well
   inside Open-Meteo's limits; a short TTL cache would be the first optimisation.
 - **No automated tests.** Behaviour was verified by calling every tool through a real
