@@ -12,3 +12,6 @@ venv/
 .vscode/
 .DS_Store
 Assignment-*.pdf
+
+# Databricks CLI sync state (records workspace paths; not source)
+.databricks/
