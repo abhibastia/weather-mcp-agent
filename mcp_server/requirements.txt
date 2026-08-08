@@ -5,3 +5,4 @@
 fastmcp>=3.2.0
 requests>=2.31.0
 databricks-sdk>=0.30.0
+uvicorn>=0.30.0

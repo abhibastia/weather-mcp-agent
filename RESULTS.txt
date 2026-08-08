@@ -1,0 +1,316 @@
+================================================================================
+AGENT DEMONSTRATION - Weather Prediction MCP Server
+================================================================================
+
+MCP server (Databricks App)
+    https://mcp-server-weather-service-7474646797973312.aws.databricksapps.com
+MCP endpoint
+    https://mcp-server-weather-service-7474646797973312.aws.databricksapps.com/mcp
+Registered in
+    Unity AI Gateway > MCPs > mcp-server-weather-service   (status: Active)
+Agent
+    Databricks AI Playground, model "Meta Llama 3.3 70B Instruct"
+    (databricks-meta-llama-3-3-70b-instruct), with the MCP server attached
+    as a tool and SYSTEM_PROMPT.md pasted as the system prompt.
+Tools exposed
+    get_current_weather, get_forecast, should_i_bring_an_umbrella,
+    get_severe_weather_alerts
+Date
+    2026-08-08
+
+Five questions follow, transcribed verbatim from the Playground including the
+model's reasoning, the tool call, the raw tool output, and the final answer.
+
+Questions 1-3 show the tools working. Questions 4-5 are included because they
+show the GUARDRAILS working, which is the part that is easy to get wrong.
+
+
+================================================================================
+Q1. What's the weather like in Chicago right now?
+================================================================================
+
+REASONING
+    The user is asking about the current weather conditions in Chicago, so I
+    need to use the get_current_weather function to provide the most
+    up-to-date information.
+
+TOOL CALL   get_current_weather
+    {
+      "location": "Chicago"
+    }
+
+TOOL OUTPUT
+    {
+      "requested_location": "Chicago",
+      "resolved_location": "Chicago, Illinois, United States",
+      "latitude": 41.85003,
+      "longitude": -87.65005,
+      "observed_at": "2026-08-08T16:45",
+      "timezone": "America/Chicago",
+      "temperature": 24.7,
+      "feels_like": 26.1,
+      "humidity_pct": 70,
+      "precipitation": 0,
+      "wind_speed": 12.8,
+      "wind_gusts": 15.1,
+      "conditions": "clear sky",
+      "units": {
+        "temperature": "°C",
+        "wind_speed": "km/h",
+        "precipitation": "mm"
+      },
+      "source": "open-meteo"
+    }
+
+ANSWER
+    The current weather in Chicago, Illinois, is a clear sky with a temperature
+    of 25 C, feeling like 26 C, and a humidity of 70%. The wind speed is
+    12.8 km/h, with gusts of 15.1 km/h, and there is no precipitation. I used
+    the location "Chicago, Illinois, United States" for this query.
+
+WHAT THIS DEMONSTRATES
+    - Correct tool selection for a "right now" question.
+    - Every figure in the answer traces to the tool output. Nothing invented.
+    - The resolved_location guardrail firing: the agent states which place it
+      actually resolved to, so a wrong geocoder match would be visible to the
+      user rather than silently wrong.
+
+
+================================================================================
+Q2. Should I bring an umbrella in Mumbai today?
+================================================================================
+
+REASONING
+    The user is asking about whether they should bring an umbrella in Mumbai
+    today. This suggests they are concerned about potential rain, so the
+    should_i_bring_an_umbrella tool is the most relevant.
+
+TOOL CALL   should_i_bring_an_umbrella
+    {
+      "location": "Mumbai"
+    }
+
+TOOL OUTPUT
+    {
+      "requested_location": "Mumbai",
+      "resolved_location": "Mumbai, Maharashtra, India",
+      "date": "2026-08-09",
+      "recommendation": "yes",
+      "confidence": "high",
+      "reason": "100% chance of precipitation with 6.0 mm expected, at or above
+                 the 40% / 1.0 mm thresholds for taking an umbrella.",
+      "thresholds_applied": {
+        "precipitation_probability_pct": 40,
+        "precipitation_accumulation_mm": 1,
+        "soaking_accumulation_mm": 10,
+        "high_wind_kmh": 35
+      },
+      "forecast_used": {
+        "conditions": "moderate drizzle",
+        "precipitation_probability_max": 100,
+        "precipitation_sum": 6,
+        "wind_speed_max": 17.5,
+        "temp_max": 29.1,
+        "temp_min": 26
+      },
+      "units": {
+        "temperature": "°C",
+        "precipitation": "mm",
+        "wind_speed": "km/h"
+      },
+      "source": "open-meteo"
+    }
+
+ANSWER
+    You should bring an umbrella in Mumbai today because there is a 100% chance
+    of precipitation with 6.0 mm expected, which is above the threshold for
+    taking an umbrella. The forecast shows moderate drizzle, and the high chance
+    of precipitation and expected accumulation exceed the thresholds for
+    recommending an umbrella.
+
+WHAT THIS DEMONSTRATES
+    - The prediction tool is NOT a passthrough. It returns a verdict
+      ("yes"), a confidence, the thresholds it applied, and the forecast
+      figures it judged.
+    - The agent chose the judgment tool over get_forecast for a
+      rain-preparedness question, as instructed.
+    - The answer explains WHY (100% vs the 40% threshold, 6.0 mm vs the
+      1.0 mm threshold) rather than asserting a bare yes.
+
+
+================================================================================
+Q3. Are there any severe weather alerts for Miami?
+================================================================================
+
+REASONING
+    The user is asking about severe weather alerts for Miami, which suggests
+    they want to know about any active alerts in the area. This tool is the
+    most relevant for answering that question.
+
+TOOL CALL   get_severe_weather_alerts
+    {
+      "location": "Miami"
+    }
+
+TOOL OUTPUT
+    {
+      "requested_location": "Miami",
+      "resolved_location": "Miami, Florida, United States",
+      "alert_count": 0,
+      "alerts": [],
+      "coverage": "us",
+      "source": "nws"
+    }
+
+ANSWER
+    There are no severe weather alerts for Miami, Florida, according to the
+    National Weather Service.
+
+WHAT THIS DEMONSTRATES
+    - The second data source (National Weather Service) is wired up and
+      reachable, separate from Open-Meteo.
+    - coverage "us" means the feed genuinely covers this location, so
+      "no alerts" is a real answer here. Contrast with Q5.
+
+
+================================================================================
+Q4. What's the weather in Xyzzyville?
+================================================================================
+
+ANSWER (no tool call was made)
+    I couldn't find any information on a location called "Xyzzyville". It's
+    possible that it's a fictional place or not a real city. Can you please
+    provide more context or clarify the location you are referring to?
+
+WHAT THIS DEMONSTRATES
+    - The agent asked the user to clarify instead of inventing a forecast,
+      which is the required behaviour for an unresolvable location.
+
+HONEST NOTE
+    The model recognised "Xyzzyville" as fictional from its own knowledge and
+    answered without calling a tool. The outcome is correct - it invented no
+    weather - but this transcript does not exercise the tool's error path.
+    That path is verified directly below.
+
+
+================================================================================
+Q5. Any weather alerts for London?
+================================================================================
+
+REASONING
+    The user is asking about severe weather alerts for London, which is outside
+    the United States. This tool provides severe weather alerts for locations
+    in the United States only, and returns an empty alert list with coverage
+    'unavailable' for locations outside the US.
+
+TOOL CALL   get_severe_weather_alerts
+    {
+      "location": "London"
+    }
+
+TOOL OUTPUT
+    {
+      "requested_location": "London",
+      "resolved_location": "London, England, United Kingdom",
+      "alerts": [],
+      "coverage": "unavailable",
+      "note": "No alert data available for this location. The National Weather
+               Service covers the United States only. (Weather API returned
+               HTTP 400)",
+      "source": "nws"
+    }
+
+ANSWER
+    There are no weather alerts available for London, as the National Weather
+    Service only covers the United States. Therefore, I couldn't retrieve any
+    alert data for this location.
+
+WHAT THIS DEMONSTRATES
+    This is the most important transcript of the five.
+
+    The agent said alert data is UNAVAILABLE for London. It did NOT say
+    "there are no alerts for London".
+
+    That distinction matters: the alert feed is US-only, so an empty list
+    outside the United States means NO DATA, not NO DANGER. Reporting it as
+    "no alerts" would be a safety-relevant falsehood - the agent would be
+    reassuring a user about severe weather it never checked. The tool
+    encodes the distinction (coverage "us" vs "unavailable") and the system
+    prompt requires the agent to honour it. Both held.
+
+
+================================================================================
+DIRECT TOOL VERIFICATION
+================================================================================
+
+Called over MCP with a real client against the deployed app, to cover what the
+Q4 transcript did not exercise.
+
+1. Unresolvable location returns a clean, structured error - not a stack trace:
+
+    get_current_weather({"location": "Xyzzyville"})
+    ->
+    {
+      "error": "unknown_location",
+      "message": "Could not find a place called 'Xyzzyville'. Try a larger
+                  nearby city, or pass coordinates as 'lat,lon'.",
+      "requested_location": "Xyzzyville",
+      "suggestion": "Ask the user to confirm the city, or provide 'lat,lon'."
+    }
+
+   The "suggestion" field is what the system prompt instructs the agent to act
+   on, which is how a tool failure becomes "please clarify" rather than a
+   guess or a traceback.
+
+2. Response shape is consistent across coverage values:
+
+    Miami   coverage=us           alert_count=0   present=True
+    London  coverage=unavailable  alert_count=0   present=True
+
+   NOTE: the Q5 transcript above was captured before this fix. At that time the
+   non-US branch omitted alert_count entirely, so the field's presence depended
+   on coverage and a caller doing response["alert_count"] would have raised a
+   KeyError on every non-US location. It is now returned on both branches. The
+   transcript is left exactly as captured rather than edited to match.
+
+3. All four tools advertised over the protocol by the deployed app:
+
+    get_current_weather          args=['location']
+    get_forecast                 args=['location', 'days']
+    should_i_bring_an_umbrella   args=['location']
+    get_severe_weather_alerts    args=['location']
+
+4. Prediction-tool decision branches, verified with synthetic forecasts so that
+   branches today's real weather cannot produce are still covered:
+
+    pop=  5%  sum= 0.0mm  wind=10  -> no   below both thresholds
+    pop= 40%  sum= 1.0mm  wind=10  -> yes  exact boundary, inclusive
+    pop= 95%  sum=14.0mm  wind=12  -> yes  soaking: "expect to get wet anyway"
+    pop= 90%  sum= 6.0mm  wind=48  -> no   wind overrides rain (umbrella inverts)
+    pop= 95%  sum=20.0mm  wind=60  -> no   wind still wins over soaking
+
+
+================================================================================
+REQUIREMENTS COVERAGE
+================================================================================
+
+MCP server built with FastMCP, @mcp.tool, streamable HTTP ... weather_mcp_server.py
+Separate adapter module, no raw requests inside a tool ....... weather_broker.py
+requirements.txt + app.yaml, deployed as its own App ......... deployed, RUNNING
+Minimum 3 tools .............................................. 4 tools
+  - current conditions ....................................... get_current_weather
+  - forecast ................................................. get_forecast
+  - prediction/recommendation with real logic ................ should_i_bring_an_umbrella
+  - stretch: severe weather alerts (2nd data source) ......... get_severe_weather_alerts
+Registered as an external MCP ................................ Unity AI Gateway, Active
+Agent using the MCP server ................................... AI Playground, Llama 3.3 70B
+System prompt with guardrails ................................ SYSTEM_PROMPT.md
+At least 3 NL questions with tool calls + answers ............ 5 above
+No secrets committed, no hardcoded API keys .................. none exist (see below)
+README with tools, setup, API + auth method .................. README.md
+
+Auth method: none required. Open-Meteo needs no API key or signup; the National
+Weather Service needs only a descriptive User-Agent header. There is therefore
+no credential in this repository to leak or rotate. README.md documents the
+Databricks secret pattern (_secret() / WorkspaceClient().secrets.get_secret())
+to use if a keyed provider is substituted.

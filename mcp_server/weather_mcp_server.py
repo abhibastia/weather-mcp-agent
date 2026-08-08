@@ -327,10 +327,55 @@ National Weather Service for severe-weather alerts (United States only).</p>
     )
 
 
+def build_app():
+    """Build the ASGI app, serving MCP on every path the gateway might call.
+
+    WHY MORE THAN ONE MOUNT
+    -----------------------
+    Databricks registers a Databricks-App-hosted MCP server by storing the
+    app URL with "/mcp" already appended, then appends "/mcp" again when it
+    calls the server. The result is a request to "/mcp/mcp", which a
+    single-mount server answers with a 404 whose body is the bare string
+    "Not Found". The gateway tries to JSON-parse that and reports:
+
+        Failed to parse MCP initialize response ...
+        Unrecognized token 'Not' ... Response: Not Found
+
+    which looks like a broken server but is really a path mismatch. Mounting
+    the same MCP app at "/mcp/mcp" and "/mcp" makes the server correct under
+    either convention, and costs nothing: it is one ASGI app behind two routes.
+
+    "/mcp/mcp" is registered first because Starlette matches in order and
+    "/mcp" would otherwise swallow it.
+    """
+    # Starlette Mounts were tried first and rejected: mounting the MCP app at
+    # two prefixes makes "/mcp" answer 307 (redirect to "/mcp/") and
+    # "/mcp/mcp" answer 404, because a Mount matches its own prefix and then
+    # fails to match the inner route. A gateway that does not follow redirects
+    # sees a failure either way. Rewriting the path before routing is exact:
+    # one app, one route, no redirects.
+    mcp_asgi = mcp.http_app(path="/mcp")
+
+    async def rewrite(scope, receive, send):
+        if scope["type"] == "http" and scope.get("path", "").rstrip("/") == "/mcp/mcp":
+            scope = dict(scope)
+            scope["path"] = "/mcp"
+            scope["raw_path"] = b"/mcp"
+        await mcp_asgi(scope, receive, send)
+
+    # Carry the lifespan through: the MCP app owns the streamable-HTTP session
+    # manager, which its lifespan starts. Losing it yields a server that 500s
+    # on the first request rather than failing loudly at startup.
+    rewrite.lifespan = mcp_asgi.lifespan
+    return rewrite
+
+
 if __name__ == "__main__":
+    import uvicorn
+
     # Databricks Apps route external HTTP traffic to this port via app.yaml;
     # streamable-http is the transport Databricks' MCP client/gateway expects
     # (see the "Host your own MCP" doc linked in the module docstring above).
     port = int(os.getenv("DATABRICKS_APP_PORT", os.getenv("PORT", 8000)))
     logger.info("Starting weather MCP server on port %d", port)
-    mcp.run(transport="http", host="0.0.0.0", port=port)
+    uvicorn.run(build_app(), host="0.0.0.0", port=port)

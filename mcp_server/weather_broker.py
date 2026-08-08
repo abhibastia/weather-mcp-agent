@@ -329,6 +329,11 @@ def get_active_alerts(location: str) -> dict:
         return {
             "requested_location": location,
             "resolved_location": _label(place),
+            # alert_count is present on this path too, so callers can read it
+            # unconditionally. Omitting it here made the response shape depend
+            # on coverage, and a consumer doing response["alert_count"] would
+            # crash on every non-US location.
+            "alert_count": 0,
             "alerts": [],
             "coverage": "unavailable",
             "note": (
