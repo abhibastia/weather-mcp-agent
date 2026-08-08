@@ -1,0 +1,7 @@
+# Deliberately minimal. The reference mcp_server pulls sentence-transformers,
+# psycopg2 and sqlalchemy for its Lakebase vector search; this server needs
+# none of that, and omitting torch keeps the app build fast and well inside
+# Free Edition's memory ceiling.
+fastmcp>=3.2.0
+requests>=2.31.0
+databricks-sdk>=0.30.0

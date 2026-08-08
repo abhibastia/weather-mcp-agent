@@ -1,0 +1,23 @@
+command:
+  - "python"
+  - "weather_mcp_server.py"
+
+resources:
+  - name: requirements
+    source:
+      path: ./requirements.txt
+
+env:
+  # Open-Meteo needs no API key, so this server has no secrets to manage.
+  # If you swap in a keyed provider (e.g. WeatherAPI.com), do NOT put the key
+  # here - add a scope/key name pair and read it with the _secret() helper
+  # documented in README.md.
+
+  # api.weather.gov (severe-weather alerts) asks callers to identify themselves
+  # and may throttle anonymous traffic. Set this to a real contact address
+  # before deploying - and one you are willing to publish, since this file is
+  # committed.
+  - name: NWS_API_BASE_URL
+    value: "https://api.weather.gov"
+  - name: NWS_USER_AGENT
+    value: "weather-mcp-agent (you@example.com)"

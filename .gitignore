@@ -1,0 +1,14 @@
+__pycache__/
+*.py[codz]
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.databrickscfg
+.idea/
+.vscode/
+.DS_Store
+Assignment-*.pdf
