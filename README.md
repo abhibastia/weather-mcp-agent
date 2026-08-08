@@ -206,7 +206,7 @@ databricks apps deploy mcp-server-weather-service \
 | `dashboard/app.py` | Stretch: Flask dashboard of recent agent tool calls |
 | `dashboard/templates/index.html` | Dashboard UI |
 | `SYSTEM_PROMPT.md` | The agent's system prompt |
-| `RESULTS.txt` | Agent transcripts: questions, tool calls, answers |
+| `RESULTS.md` | Agent transcripts: questions, tool calls, answers |
 
 ---
 
